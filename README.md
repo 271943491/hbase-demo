@@ -13,6 +13,7 @@ hbaseMapReduce hbase自带mapreduce操作
 blog2表结构:
 
 hbase(main):055:0> scan 'blog2'
+
 ROW                                                          COLUMN+CELL
  rowkey1                                                     column=article:content, timestamp=1471875534306, value=HBase is the Hadoop database. Use it when you need random, realtime read/write access to your Big Data.
  rowkey1                                                     column=article:tag, timestamp=1471875534306, value=Hadoop,HBase,NoSQL
