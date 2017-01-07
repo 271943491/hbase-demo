@@ -23,4 +23,5 @@ ROW                                                          COLUMN+CELL
 1 row(s) in 0.0870 seconds
 
 flume-conf.properties配置项为flume将kafka数据写入到hbase中
+
 sh bin/flume-ng agent --conf-file conf/flume-conf.properties --name agent -Dflume.root.logger=INFO,console
