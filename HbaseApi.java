@@ -1,22 +1,37 @@
 package com.demo;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.HColumnDescriptor;
+import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.MasterNotRunningException;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.ZooKeeperConnectionException;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
+import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.hbase.client.HTable;
+import org.apache.hadoop.hbase.client.HTableFactory;
+import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.Table;
+import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
+import org.apache.hadoop.hbase.filter.Filter;
+import org.apache.hadoop.hbase.filter.FilterList;
+import org.apache.hadoop.hbase.filter.FilterList.Operator;
+import org.apache.hadoop.hbase.filter.RegexStringComparator;
+import org.apache.hadoop.hbase.filter.RowFilter;
+import org.apache.hadoop.hbase.filter.SingleColumnValueFilter;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
@@ -55,6 +70,8 @@ public class HbaseApi {
 		job.setMapperClass(KPIPVMapper.class);
 		job.setReducerClass(KPIPVReduce.class);
 
+		job.setNumReduceTasks(3);
+
 		job.setInputFormatClass(TextInputFormat.class);
 		job.setOutputFormatClass(TextOutputFormat.class);
 
@@ -67,10 +84,16 @@ public class HbaseApi {
 		job.waitForCompletion(true);
 
 		// isExists("person");
-		// scanTable("person");
-		// selectByRowKey("person", "rowkey1");
+		// updateData("person", "rowkey5", "info", "visitingName", "100");
+		// selectByRowKeyFamilyQualifier("scores4", "Tom", "course", "math");
+		// createTable("ytf", "salary");
+		// listAllTable();
+		// deleteByRowKey("scores4", "Jim");
+		// scanTable("scores4");
+		selectByRowKey("person", "rowkey1");
 		// insertTable("person", "rowkey3", "info", "name", "hq");
-
+		// filterData("scores4","course","math","97");
+		// filterData("scores4", "Y");
 	}
 
 	public static class KPIPVMapper extends Mapper<LongWritable, Text, Text, IntWritable> {
@@ -100,12 +123,16 @@ public class HbaseApi {
 			for (IntWritable val : values) {
 				sum += val.get();
 			}
-			context.write(new Text(key), new IntWritable(sum));
-			insertTable("person", "rowkey4", "info", "pageNum", key.toString());
-			insertTable("person", "rowkey4", "info", "visitingNum", String.valueOf(sum));
+			int taskNum = context.getNumReduceTasks();
+			// task_local579161201_0001_r_000000
+			int taskId = context.getTaskAttemptID().getTaskID().getId();
+			context.write(new Text(key + "|" + String.valueOf(taskNum + taskId)), new IntWritable(sum));
+			insertData("person", "rowkey4", "info", "pageNum", key.toString());
+			insertData("person", "rowkey4", "info", "visitingNum", String.valueOf(sum));
 		}
 	}
 
+	// 判断表是否存在
 	public static void isExists(String tableName) {
 
 		try {
@@ -115,6 +142,7 @@ public class HbaseApi {
 			} else {
 				System.out.println(tableName + ",该表不存在");
 			}
+			admin.close();
 		} catch (MasterNotRunningException e1) {
 			// TODO Auto-generated catch block
 			e1.printStackTrace();
@@ -127,6 +155,7 @@ public class HbaseApi {
 		}
 	}
 
+	// 列出所有表
 	public static void listAllTable() {
 
 		try {
@@ -135,6 +164,7 @@ public class HbaseApi {
 			for (TableName table : tableas) {
 				System.out.println(table.getNameAsString());
 			}
+			admin.close();
 		} catch (MasterNotRunningException e1) {
 			// TODO Auto-generated catch block
 			e1.printStackTrace();
@@ -147,18 +177,20 @@ public class HbaseApi {
 		}
 	}
 
-	public static void selectByRowKey(String tableName, String rowkey) {
-
+	// 建表 tableName：表名，family:列族，qualifier：列，value：值
+	public static void createTable(String tableName, String family) {
 		try {
-			Connection connection = ConnectionFactory.createConnection(hconfig);
-			Table table = connection.getTable(TableName.valueOf(tableName));
-			Get get = new Get(rowkey.getBytes());
-			Result result = table.get(get);
-
-			for (KeyValue keyValue : result.raw()) {
-				System.out.println(new String(keyValue.getQualifier()) + "------" + new String(keyValue.getValue()));
+			HBaseAdmin admin = new HBaseAdmin(hconfig);
+			if (admin.tableExists(tableName)) {
+				admin.disableTable(tableName);
+				admin.deleteTable(tableName);
 			}
-
+			HColumnDescriptor hColumnDesc = new HColumnDescriptor(family);
+			HTableDescriptor htableDesc = new HTableDescriptor(TableName.valueOf(tableName));
+			htableDesc.addFamily(hColumnDesc);
+			// 初始化第一个rowkey，最后一个rowkey，region个数
+			admin.createTable(htableDesc, "00".getBytes(), "10".getBytes(), 3);
+			admin.close();
 		} catch (MasterNotRunningException e1) {
 			// TODO Auto-generated catch block
 			e1.printStackTrace();
@@ -171,27 +203,7 @@ public class HbaseApi {
 		}
 	}
 
-	public static void insertTable(String tableName, String rowkey, String family, String qualifier, String value) {
-
-		try {
-			Connection connection = ConnectionFactory.createConnection(hconfig);
-			Table table = connection.getTable(TableName.valueOf(tableName));
-			Put put = new Put(rowkey.getBytes());
-			put.addColumn(family.getBytes(), qualifier.getBytes(), value.getBytes());
-			table.put(put);
-
-		} catch (MasterNotRunningException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		} catch (ZooKeeperConnectionException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		} catch (IOException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		}
-	}
-
+	// 查询表所有数据
 	public static void scanTable(String tableName) {
 
 		try {
@@ -216,4 +228,222 @@ public class HbaseApi {
 			e1.printStackTrace();
 		}
 	}
+
+	// 根据rowkey查询数据
+	public static void selectByRowKey(String tableName, String rowkey) {
+
+		try {
+
+			HTableInterface table = new HTableFactory().createHTableInterface(hconfig, tableName.getBytes());
+
+			// Connection connection =
+			// ConnectionFactory.createConnection(hconfig);
+			// Table table = connection.getTable(TableName.valueOf(tableName));
+			Get get = new Get(rowkey.getBytes());
+			Result result = table.get(get);
+
+			for (KeyValue keyValue : result.raw()) {
+				System.out.println(new String(keyValue.getQualifier()) + "------" + new String(keyValue.getValue()));
+			}
+
+		} catch (MasterNotRunningException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (ZooKeeperConnectionException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+	}
+
+	// 根据rowkey和列族查询数据
+	public static void selectByRowKeyAndFamily(String tableName, String rowkey, String family) {
+
+		try {
+			Connection connection = ConnectionFactory.createConnection(hconfig);
+			Table table = connection.getTable(TableName.valueOf(tableName));
+			Get get = new Get(rowkey.getBytes());
+			get.addFamily(family.getBytes());
+			Result result = table.get(get);
+
+			for (KeyValue keyValue : result.raw()) {
+				System.out.println(new String(keyValue.getQualifier()) + "------" + new String(keyValue.getValue()));
+			}
+
+		} catch (MasterNotRunningException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (ZooKeeperConnectionException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+	}
+
+	// 根据rowkey、列族、列查询数据
+	public static void selectByRowKeyFamilyQualifier(String tableName, String rowkey, String family, String qualifier) {
+
+		try {
+			Connection connection = ConnectionFactory.createConnection(hconfig);
+			Table table = connection.getTable(TableName.valueOf(tableName));
+			Get get = new Get(rowkey.getBytes());
+			get.addColumn(family.getBytes(), qualifier.getBytes());
+			Result result = table.get(get);
+
+			for (KeyValue keyValue : result.raw()) {
+				System.out.println(new String(keyValue.getQualifier()) + "------" + new String(keyValue.getValue()));
+			}
+
+		} catch (MasterNotRunningException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (ZooKeeperConnectionException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+	}
+
+	// 插入数据到hbase
+	public static void insertData(String tableName, String rowkey, String family, String qualifier, String value) {
+
+		try {
+			Connection connection = ConnectionFactory.createConnection(hconfig);
+			Table table = connection.getTable(TableName.valueOf(tableName));
+			Put put = new Put(rowkey.getBytes());
+			put.addColumn(family.getBytes(), qualifier.getBytes(), value.getBytes());
+			table.put(put);
+
+		} catch (MasterNotRunningException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (ZooKeeperConnectionException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+	}
+
+	// 更新数据
+	public static void updateData(String tableName, String rowkey, String family, String qualifier, String value) {
+		try {
+			Connection connection = ConnectionFactory.createConnection(hconfig);
+
+			Table table = connection.getTable(TableName.valueOf(tableName));
+
+			Put put = new Put(rowkey.getBytes());
+
+			put.addColumn(family.getBytes(), qualifier.getBytes(), value.getBytes());
+
+			table.put(put);
+
+		} catch (MasterNotRunningException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (ZooKeeperConnectionException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+	}
+
+	public static void deleteByRowKey(String tableName, String rowkey) {
+		try {
+
+			Connection connection = ConnectionFactory.createConnection(hconfig);
+
+			Table table = connection.getTable(TableName.valueOf(tableName));
+
+			Delete delete = new Delete(rowkey.getBytes());
+
+			table.delete(delete);
+
+		} catch (MasterNotRunningException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (ZooKeeperConnectionException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+	}
+
+	// 过滤器，过滤value在一个范围的数据
+	public static void filterData(String tableName, String family, String qualifier, String value) {
+		try {
+
+			HTable table = new HTable(hconfig, tableName);
+
+			List<Filter> filters = new ArrayList<Filter>();
+
+			filters.add(new SingleColumnValueFilter(family.getBytes(), qualifier.getBytes(), CompareOp.GREATER,
+					value.getBytes())); // 大于该值
+			filters.add(new SingleColumnValueFilter(family.getBytes(), qualifier.getBytes(), CompareOp.LESS,
+					value.getBytes())); // 小于该值
+
+			FilterList filterList = new FilterList(Operator.MUST_PASS_ONE, filters);
+			ResultScanner resultScanner = table.getScanner(new Scan().setFilter(filterList));
+
+			for (Result result : resultScanner) {
+				for (KeyValue keyValue : result.raw()) {
+					System.out
+							.println(new String(keyValue.getQualifier()) + "------" + new String(keyValue.getValue()));
+				}
+			}
+
+			table.close();
+
+		} catch (MasterNotRunningException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (ZooKeeperConnectionException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+	}
+
+	// 过滤器，按rowkay过滤
+	public static void filterData(String tableName, String rowkay) {
+		try {
+
+			HTable table = new HTable(hconfig, tableName);
+			Filter filter = new RowFilter(CompareOp.EQUAL, new RegexStringComparator(rowkay));
+			ResultScanner resultScanner = table.getScanner(new Scan().setFilter(filter));
+
+			for (Result result : resultScanner) {
+				for (KeyValue keyValue : result.raw()) {
+					System.out
+							.println(new String(keyValue.getQualifier()) + "------" + new String(keyValue.getValue()));
+				}
+			}
+
+			table.close();
+
+		} catch (MasterNotRunningException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (ZooKeeperConnectionException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+	}
+
 }
